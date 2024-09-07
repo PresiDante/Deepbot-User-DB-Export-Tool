@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32630.192
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Deepbot User DB Export Tool", "Deepbot User DB Export Tool\Deepbot User DB Export Tool.csproj", "{F48BC1B1-69CB-4C88-B379-68838E016728}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F48BC1B1-69CB-4C88-B379-68838E016728}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F48BC1B1-69CB-4C88-B379-68838E016728}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F48BC1B1-69CB-4C88-B379-68838E016728}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F48BC1B1-69CB-4C88-B379-68838E016728}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {14B2D660-F35E-4358-BF5C-B0540B4C8DF1}
+	EndGlobalSection
+EndGlobal
