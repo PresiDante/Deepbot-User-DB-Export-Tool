@@ -8,53 +8,34 @@ using System.Linq;
 using OfficeOpenXml;
 
 public class DeepbotWebsocketDataExtract
-{     
+{
+    static DeepbotAPI deepbot;
+    static int option = -1;
+    static int offset = 0;
+    static bool processing = false;
+
     static async Task Main(string[] args)
     {
-        Task<DeepbotAPI> deepbot = DeepbotAPI.CreateAsync();
-    }
-}
-
-public class DeepbotAPI
-{
-    string apiKey = "";
-    int option = -1;
-    string apiURL = "ws://localhost:3337/";
-    List<User> allUsers = new List<User>();
-    bool processing = false;
-    int offset = 0;
-
-    public static async Task<DeepbotAPI> CreateAsync()
-    {
-        DeepbotAPI x = new DeepbotAPI();
-        await x.InitialiseAsync();
-        return x;
-    }
-
-    private DeepbotAPI() { }
-
-    private async Task InitialiseAsync()
-    {
-        SetupAPIKey();
-        SetupAPIOption();
+        deepbot = new DeepbotAPI();
+        option = deepbot.SetupAPIOption();
         await WebsocketClient();
     }
 
-    private async Task WebsocketClient()
+    private static async Task WebsocketClient()
     {
         var exitEvent = new ManualResetEvent(false);
-        Uri uri = new(apiURL);
+        Uri uri = new(deepbot.WebsocketURL());
 
         using (var client = new WebsocketClient(uri))
         {
             client.ReconnectTimeout = TimeSpan.FromSeconds(30);
             client.ReconnectionHappened.Subscribe(info => Console.WriteLine($"Reconnection happened, type: {info.Type}"));
-            client.MessageReceived.Subscribe(msg =>
+            client.MessageReceived.Subscribe(async msg =>
             {
                 Console.WriteLine($"Message received: {msg}");
                 JObject response = JObject.Parse(msg.ToString());
 
-                switch(option)
+                switch (option)
                 {
                     case 1:
                         if (response["function"].ToString() == "get_users" && processing)
@@ -62,10 +43,7 @@ public class DeepbotAPI
                             if (response["msg"].Count() > 0)
                             {
                                 List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
-                                foreach(User person in users)
-                                {
-                                    allUsers.Add(person);
-                                }
+                                await deepbot.UpdateAllUsersList(users);
                                 offset += 100;
                                 client.Send($"api|get_users|{offset}|100");
                             }
@@ -73,7 +51,8 @@ public class DeepbotAPI
                             {
                                 option = -1;
                                 processing = false;
-                                ProduceCSVFile();
+                                deepbot.ProduceCSVFile();
+                                option = deepbot.SetupAPIOption();
                             }
                         }
                         break;
@@ -83,46 +62,43 @@ public class DeepbotAPI
                             if (response["msg"].Count() > 0)
                             {
                                 List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
-                                foreach (User person in users)
-                                {
-                                    allUsers.Add(person);
-                                }
+                                await deepbot.UpdateAllUsersList(users);
                                 offset += 100;
-                                client.Send($"api|get_users|{offset}|100");
+                                client.Send(deepbot.WebsocketGetUsersCall(offset));
                             }
                             else
                             {
                                 option = -1;
                                 processing = false;
-                                ProduceFirebotXLSXFile();
-                                ReadFirebotUserDatabase();
+                                deepbot.ProduceFirebotXLSXFile();
+                                deepbot.ReadFirebotUserDatabase();
                             }
                         }
                         break;
                     default:
-                        SetupAPIOption();
+                        option = deepbot.SetupAPIOption();
                         break;
                 };
             });
 
             if (option == 0)
             {
-                SetupAPIOption();
-            }     
+                exitEvent.Close();
+            }
 
             client.Start();
 
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                client.Send($"api|register|{apiKey}");
+                client.Send(deepbot.WebsocketAPIRegisterCall());
                 switch (option)
                 {
                     case 1:
                     case 2:
-                        allUsers = new List<User>();
+                        await deepbot.ClearAllUsersList();
                         processing = true;
                         offset = 0;
-                        client.Send("api|get_users|0|100");
+                        client.Send(deepbot.WebsocketGetUsersCall(offset));
                         break;
                     default:
                         break;
@@ -133,7 +109,53 @@ public class DeepbotAPI
         }
     }
 
-    private void SetupAPIKey()
+}
+
+public class DeepbotAPI
+{
+    private string apiKey = "";
+    private string apiIP = "localhost";
+    private int apiPort = 3337;
+    private List<User> allUsers = new List<User>();
+
+    public DeepbotAPI() 
+    {
+        SetAPIKey();
+        SetAPIIP();
+    }
+
+    public string WebsocketURL()
+    {
+        return $"ws://{apiIP}:{apiPort}/";
+    }
+
+    public string WebsocketAPIRegisterCall()
+    {
+        return $"api|register|{apiKey}";
+    }
+
+    public string WebsocketGetUsersCall(int offset)
+    {
+        return $"api|get_users|{offset}|100";
+    }
+
+    public async Task<Task> UpdateAllUsersList(List<User> users)
+    {
+        foreach (User person in users)
+        {
+            allUsers.Add(person);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task<Task> ClearAllUsersList()
+    {
+        allUsers = new List<User>();
+        return Task.CompletedTask;
+    }
+
+    private void SetAPIKey()
     {
         while (string.IsNullOrEmpty(apiKey))
         {
@@ -142,7 +164,15 @@ public class DeepbotAPI
         }
     }
 
-    private void ProduceCSVFile()
+    private void SetAPIIP()
+    {
+        Console.WriteLine("Please enter the IP address where Deepbot is hosted. If this is running locally, press enter: ");
+        var input = Console.ReadLine() ?? "";
+
+        apiIP = string.IsNullOrEmpty(input) ? "localhost" : input;
+    }
+
+    public void ProduceCSVFile()
     {
         var sb = new StringBuilder();
         sb.AppendLine("Username, Points, Watch Time, Join Date, Last Seen");
@@ -154,7 +184,7 @@ public class DeepbotAPI
         Console.WriteLine("File created!");
     }
 
-    private void ProduceFirebotXLSXFile()
+    public void ProduceFirebotXLSXFile()
     {
         var filename = "points.xlsx";
         var file = new FileInfo(filename);
@@ -186,7 +216,7 @@ public class DeepbotAPI
         Console.WriteLine("File created!");
     }
 
-    private void ReadFirebotUserDatabase()
+    public void ReadFirebotUserDatabase()
     {
         List<FirebotUserDB> users = new List<FirebotUserDB>();
 
@@ -227,6 +257,7 @@ public class DeepbotAPI
                 sb.AppendLine(JsonConvert.SerializeObject(user));
             }
             File.WriteAllText(filename, sb.ToString());
+            Console.WriteLine("Firebot user.db successfully updated");
         }
         catch
         {
@@ -234,9 +265,10 @@ public class DeepbotAPI
         }    
     }
 
-    private void SetupAPIOption()
+    public int SetupAPIOption()
     {
         bool valid = false;
+        int option = -1;
 
         while (!valid)
         {
@@ -244,9 +276,14 @@ public class DeepbotAPI
             
             if(Int32.TryParse(Console.ReadLine(),out option))
             {
-                valid = true;
+                if (option >= 0)
+                {
+                    valid = true;
+                }
             }
         }
+
+        return option;
     }
 }
 
