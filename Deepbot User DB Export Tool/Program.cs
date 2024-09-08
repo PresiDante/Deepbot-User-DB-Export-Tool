@@ -231,10 +231,9 @@ public class DeepbotAPI
         catch
         {
 
-        }
-
-
+        }    
     }
+
     private void SetupAPIOption()
     {
         bool valid = false;
@@ -273,48 +272,42 @@ public class User
 
 public class FirebotUserDB
 {
+    [JsonProperty("username")]
+    public string Username { get; set; }
     [JsonProperty("_id")]
-    public int Id { get; set; }
-    [JsonProperty("chatMessages")]
-    public int ChatMessages { get; set; }
-    [JsonProperty("currency")]
-    public JObject? Currency { get; set; }
-    [JsonProperty("disableActiveUserList")]
-    public bool DisableActiveUserList { get; set; }
-    [JsonProperty("disableAutoStatAccrual")]
-    public bool DisableAutoStatAccrual { get; set; }
-    [JsonProperty("disableViewerList")]
-    public bool DisableViewerList { get; set; }
+    public string Id { get; set; }
     [JsonProperty("displayName")]
     public string? DisplayName { get; set; }
-    [JsonProperty("joinDate")]
-    public long JoinDate { get; set; }
-    [JsonProperty("lastSeen")]
-    public long LastSeen { get; set; }
-    // Need to double check what can be contained in this meta data. Not needed for exporting points
-    // Leaving as a list of strings until we find out more
-    [JsonProperty("metadata")]
-    public JObject? Metadata { get; set; }
-    [JsonProperty("minutesInChannel")]
-    public decimal MinutesInChannel { get; set; }
+    [JsonProperty("profilePicUrl")]
+    public string ProfilePicUrl { get; set; }
+    [JsonProperty("twitch")]
+    public bool Twitch { get; set; }
+    [JsonProperty("twitchRoles")]
+    public JObject? TwitchRoles { get; set; }
     [JsonProperty("online")]
     public bool Online { get; set; }
     [JsonProperty("onlineAt")]
     public long OnlineAt { get; set; }
-    [JsonProperty("profilePicUrl")]
-    public string ProfilePicUrl { get; set; }
-    // Need to double check what can be contained in this ranks object. Not needed for exporting points
-    // Leaving as a list of strings until we find out more
+    [JsonProperty("lastSeen")]
+    public long LastSeen { get; set; }
+    [JsonProperty("joinDate")]
+    public long JoinDate { get; set; }
+    [JsonProperty("minutesInChannel")]
+    public decimal MinutesInChannel { get; set; }
+    [JsonProperty("chatMessages")]
+    public int ChatMessages { get; set; }
+    [JsonProperty("disableAutoStatAccrual")]
+    public bool DisableAutoStatAccrual { get; set; }
+    [JsonProperty("disableActiveUserList")]
+    public bool DisableActiveUserList { get; set; }
+    [JsonProperty("disableViewerList")]
+    public bool DisableViewerList { get; set; }
+    [JsonProperty("metadata")]
+    public JObject? Metadata { get; set; }
+    [JsonProperty("currency")]
+    public JObject? Currency { get; set; }
     [JsonProperty("ranks")]
     public JObject? Ranks { get; set; }
-    [JsonProperty("twitch")]
-    public bool Twitch { get; set; }
-    // Need to double check what can be contained in this twitchRoles object. Not needed for exporting points
-    // Leaving as a list of strings until we find out more
-    [JsonProperty("twitchRoles")]
-    public JObject? TwitchRoles { get; set; }
-    [JsonProperty("username")]
-    public string Username { get; set; }
 }
 
 
