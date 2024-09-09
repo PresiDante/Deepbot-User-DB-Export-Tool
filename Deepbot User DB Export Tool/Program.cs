@@ -32,12 +32,11 @@ public class DeepbotWebsocketDataExtract
             client.ReconnectionHappened.Subscribe(info => Console.WriteLine($"Reconnection happened, type: {info.Type}"));
             client.MessageReceived.Subscribe(async msg =>
             {
-                Console.WriteLine($"Message received: {msg}");
                 JObject response = JObject.Parse(msg.ToString());
 
                 switch (option)
                 {
-                    case 1:
+                    case 1: // Create general purpose .csv file with figures that can be acquired through Deepbot websocket API
                         if (response["function"].ToString() == "get_users" && processing)
                         {
                             if (response["msg"].Count() > 0)
@@ -53,10 +52,11 @@ public class DeepbotWebsocketDataExtract
                                 processing = false;
                                 deepbot.ProduceCSVFile();
                                 option = deepbot.SetupAPIOption();
+                                SendWebsocketMessageOption(client);
                             }
                         }
                         break;
-                    case 2:
+                    case 2: // Create .xlsx file for import to Firebot
                         if (response["function"].ToString() == "get_users" && processing)
                         {
                             if (response["msg"].Count() > 0)
@@ -71,18 +71,41 @@ public class DeepbotWebsocketDataExtract
                                 option = -1;
                                 processing = false;
                                 deepbot.ProduceFirebotXLSXFile();
+                                option = deepbot.SetupAPIOption();
+                                SendWebsocketMessageOption(client);
+                            }
+                        }
+                        break;
+                    case 3: // Update Firebot user.db directly
+                        if (response["function"].ToString() == "get_users" && processing)
+                        {
+                            if (response["msg"].Count() > 0)
+                            {
+                                List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
+                                await deepbot.UpdateAllUsersList(users);
+                                offset += 100;
+                                client.Send(deepbot.WebsocketGetUsersCall(offset));
+                            }
+                            else
+                            {
+                                option = -1;
+                                processing = false;
                                 deepbot.ReadFirebotUserDatabase();
+                                option = deepbot.SetupAPIOption();
+                                SendWebsocketMessageOption(client);
                             }
                         }
                         break;
                     default:
                         option = deepbot.SetupAPIOption();
+                        SendWebsocketMessageOption(client);
                         break;
                 };
             });
 
             if (option == 0)
             {
+                //TODO: Close websocket connection properly to exit the program
                 exitEvent.Close();
             }
 
@@ -91,22 +114,30 @@ public class DeepbotWebsocketDataExtract
             Task.Run(async () =>
             {
                 client.Send(deepbot.WebsocketAPIRegisterCall());
-                switch (option)
-                {
-                    case 1:
-                    case 2:
-                        await deepbot.ClearAllUsersList();
-                        processing = true;
-                        offset = 0;
-                        client.Send(deepbot.WebsocketGetUsersCall(offset));
-                        break;
-                    default:
-                        break;
-                }
+                SendWebsocketMessageOption(client);
             });
 
             exitEvent.WaitOne();
         }
+    }
+
+    public static async Task<Task> SendWebsocketMessageOption(WebsocketClient client)
+    {
+        switch (option)
+        {
+            case 1:
+            case 2:
+            case 3:
+                await deepbot.ClearAllUsersList();
+                processing = true;
+                offset = 0;
+                client.Send(deepbot.WebsocketGetUsersCall(offset));
+                break;
+            default:
+                break;
+        }
+
+        return Task.CompletedTask;
     }
 
 }
@@ -146,6 +177,8 @@ public class DeepbotAPI
             allUsers.Add(person);
         }
 
+        Console.WriteLine($"Retrieved {allUsers.Count} users");
+            
         return Task.CompletedTask;
     }
 
@@ -173,14 +206,26 @@ public class DeepbotAPI
     }
 
     public void ProduceCSVFile()
-    {
+    { 
+        var filename = "deepbotUsers.csv";
+        var file = new FileInfo(filename);
+
+        if (file.Exists)
+        {
+            file.Delete();
+        }
+
+        Console.WriteLine("Producing CSV file with retrieved data. Please wait...");
+
         var sb = new StringBuilder();
         sb.AppendLine("Username, Points, Watch Time, Join Date, Last Seen");
+        
         foreach(User user in allUsers)
         {
             sb.AppendLine($"{user.Username},{user.Points},{user.WatchTime},{user.JoinDate},{user.LastSeen}");
         }
-        File.WriteAllText("test.csv", sb.ToString());
+
+        File.WriteAllText(filename, sb.ToString());
         Console.WriteLine("File created!");
     }
 
@@ -216,11 +261,18 @@ public class DeepbotAPI
         Console.WriteLine("File created!");
     }
 
+    /// <summary>
+    /// This function currently works on the assumption that the user database is created after import.
+    /// </summary>
     public void ReadFirebotUserDatabase()
     {
         List<FirebotUserDB> users = new List<FirebotUserDB>();
+        List<string> usernamesNotImported = new List<string>();
+        string filename = "users.db";
+        string errorFilename = $"userDidntExistForImport{DateTime.Now.ToString("yyyyMMddTHHmmss")}.csv";
+        int usersUpdated = 0;
 
-        var filename = "users.db";
+        Console.WriteLine("Attempting to set values (Currency, Last Seen, Join date) in user.db.\nThis process can take a while. Please wait...");
         try
         {
             using (StreamReader sr = new StreamReader(filename))
@@ -232,7 +284,14 @@ public class DeepbotAPI
                     users.Add(JsonConvert.DeserializeObject<FirebotUserDB>(line));
                 }
             }
-            Console.WriteLine("test");
+
+            foreach (User DeepbotUser in allUsers)
+            {
+                if(!users.Exists(a => a.Username == DeepbotUser.Username))
+                {
+                    usernamesNotImported.Add(DeepbotUser.Username);
+                }
+            }
 
             foreach(FirebotUserDB user in users)
             {
@@ -247,6 +306,7 @@ public class DeepbotAPI
                         user.Currency[token.Path] = userToUpdate.Points;
                         //user.Currency[token.] = userToUpdate.Points;
                     }
+                    usersUpdated++;
                 }
             }
 
@@ -257,11 +317,23 @@ public class DeepbotAPI
                 sb.AppendLine(JsonConvert.SerializeObject(user));
             }
             File.WriteAllText(filename, sb.ToString());
-            Console.WriteLine("Firebot user.db successfully updated");
-        }
-        catch
-        {
+            Console.WriteLine($"Firebot user.db successfully modified. {usersUpdated} user(s) was/were updated.");
 
+            if (usernamesNotImported.Any())
+            {
+                StringBuilder sb2 = new StringBuilder();
+
+                foreach(string username in usernamesNotImported)
+                {
+                    sb2.AppendLine(username);
+                }
+                File.WriteAllText(errorFilename, sb2.ToString());
+                Console.WriteLine($"{usernamesNotImported.Count} user(s) didn't exist in Firebot database. This could be because they no longer exist on Twitch. See {errorFilename} for further details of usernames not imported");
+            }
+        }
+        catch (FileNotFoundException e)
+        {
+            Console.WriteLine("User.db was not found");
         }    
     }
 
@@ -272,7 +344,7 @@ public class DeepbotAPI
 
         while (!valid)
         {
-            Console.WriteLine("Please type the number of the operation you are trying to perform \n1: Retrieve all users and export to CSV\n2: Retrieve all users and export to XLSX (For Firebot)\n0: Exit Program");
+            Console.WriteLine("Please type the number of the operation you are trying to perform \n1: Retrieve all users and export to CSV\n2: Retrieve all users and export to XLSX (For Firebot)\n3: Attempt to update Firebot user.db with currency information\n0: Exit Program");
             
             if(Int32.TryParse(Console.ReadLine(),out option))
             {
