@@ -41,8 +41,6 @@ public class DeepbotWebsocketDataExtract
             {
                 JObject response;
 
-                Console.WriteLine(msg);
-
                 try
                 {
                     response = JObject.Parse(msg.ToString());
