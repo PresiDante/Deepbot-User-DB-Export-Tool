@@ -9,16 +9,18 @@ using OfficeOpenXml;
 
 public class DeepbotWebsocketDataExtract
 {
-    static DeepbotAPI deepbot;
+    static DeepbotAPI deepbot = new DeepbotAPI();
     static int option = -1;
     static int offset = 0;
     static bool processing = false;
 
     static async Task Main(string[] args)
     {
-        deepbot = new DeepbotAPI();
-        option = deepbot.SetupAPIOption();
+        deepbot.SetAPIKey();
+        deepbot.SetAPIIP();
+        option = SetupAPIOption();
         await WebsocketClient();
+        Console.WriteLine("Program finished!");
     }
 
     private static async Task WebsocketClient()
@@ -29,92 +31,108 @@ public class DeepbotWebsocketDataExtract
         using (var client = new WebsocketClient(uri))
         {
             client.ReconnectTimeout = TimeSpan.FromSeconds(30);
-            client.ReconnectionHappened.Subscribe(info => Console.WriteLine($"Reconnection happened, type: {info.Type}"));
+            client.ReconnectionHappened.Subscribe(info =>
+            {
+                Console.WriteLine($"Reconnection happened, type: {info.Type}");
+                client.Send(deepbot.WebsocketAPIRegisterCall());
+            });
+
             client.MessageReceived.Subscribe(async msg =>
             {
-                JObject response = JObject.Parse(msg.ToString());
+                JObject response;
+
+                Console.WriteLine(msg);
+
+                try
+                {
+                    response = JObject.Parse(msg.ToString());
+                }
+                catch
+                {
+                    Console.WriteLine($"Deepbot sent {msg} but we are choosing to ignore this.");
+                    return;
+                }
+
+                if (response["function"] == null || response["msg"] == null)
+                {
+                    Console.WriteLine("Function or Msg params null. Continuing");
+                    return;
+                }
+
+                var function = response["function"]?.ToString() ?? "";
+                var message = response["msg"]?.ToString() ?? "";
+
+                var updated = true;
+
+                if (function == "get_users" && processing)
+                {
+                    if (message == "list empty")
+                    {
+                        updated = false;
+                    }
+                    else
+                    {
+                        updated = deepbot.UpdateAllUsersList(JsonConvert.DeserializeObject<List<User>>(message));
+
+                        if (updated)
+                        {
+                            offset += 100;
+                            client.Send(deepbot.WebsocketGetUsersCall(offset));
+                            return;
+                        }
+                    }
+                }
 
                 switch (option)
                 {
                     case 1: // Create general purpose .csv file with figures that can be acquired through Deepbot websocket API
-                        if (response["function"].ToString() == "get_users" && processing)
+                        if (!updated)
                         {
-                            if (response["msg"].Count() > 0)
-                            {
-                                List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
-                                await deepbot.UpdateAllUsersList(users);
-                                offset += 100;
-                                client.Send($"api|get_users|{offset}|100");
-                            }
-                            else
-                            {
-                                option = -1;
-                                processing = false;
-                                deepbot.ProduceCSVFile();
-                                option = deepbot.SetupAPIOption();
-                                SendWebsocketMessageOption(client);
-                            }
+                            offset = 0;
+                            option = -1;
+                            processing = false;
+                            deepbot.ProduceCSVFile();
+                            option = SetupAPIOption();
+                            await SendWebsocketMessageOption(client);
                         }
                         break;
                     case 2: // Create .xlsx file for import to Firebot
-                        if (response["function"].ToString() == "get_users" && processing)
+                        if (!updated)
                         {
-                            if (response["msg"].Count() > 0)
-                            {
-                                List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
-                                await deepbot.UpdateAllUsersList(users);
-                                offset += 100;
-                                client.Send(deepbot.WebsocketGetUsersCall(offset));
-                            }
-                            else
-                            {
-                                option = -1;
-                                processing = false;
-                                deepbot.ProduceFirebotXLSXFile();
-                                option = deepbot.SetupAPIOption();
-                                SendWebsocketMessageOption(client);
-                            }
+                            option = -1;
+                            processing = false;
+                            deepbot.ProduceFirebotXLSXFile();
+                            option = SetupAPIOption();
+                            await SendWebsocketMessageOption(client);
                         }
                         break;
                     case 3: // Update Firebot user.db directly
-                        if (response["function"].ToString() == "get_users" && processing)
+                        if (!updated)
                         {
-                            if (response["msg"].Count() > 0)
-                            {
-                                List<User> users = JsonConvert.DeserializeObject<List<User>>(response["msg"].ToString());
-                                await deepbot.UpdateAllUsersList(users);
-                                offset += 100;
-                                client.Send(deepbot.WebsocketGetUsersCall(offset));
-                            }
-                            else
-                            {
-                                option = -1;
-                                processing = false;
-                                deepbot.ReadFirebotUserDatabase();
-                                option = deepbot.SetupAPIOption();
-                                SendWebsocketMessageOption(client);
-                            }
+                            option = -1;
+                            processing = false;
+                            deepbot.ReadFirebotUserDatabase();
+                            option = SetupAPIOption();
+                            await SendWebsocketMessageOption(client);
                         }
                         break;
                     default:
-                        option = deepbot.SetupAPIOption();
-                        SendWebsocketMessageOption(client);
                         break;
                 };
+
+                if (option == 0)
+                {
+                    await client.Stop(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "Exit called!");
+                    exitEvent.Set();
+                }
             });
 
-            if (option == 0)
-            {
-                //TODO: Close websocket connection properly to exit the program
-                exitEvent.Close();
-            }
+            await client.Start();
 
-            client.Start();
-
-            Task.Run(async () =>
+            await Task.Run(async () =>
             {
                 client.Send(deepbot.WebsocketAPIRegisterCall());
-                SendWebsocketMessageOption(client);
+                await SendWebsocketMessageOption(client);
             });
 
             exitEvent.WaitOne();
@@ -125,10 +143,13 @@ public class DeepbotWebsocketDataExtract
     {
         switch (option)
         {
+            case 0:
+                //client.Send(deepbot.WebsocketGetUsersCall(offset));
+                break;
             case 1:
             case 2:
             case 3:
-                await deepbot.ClearAllUsersList();
+                deepbot.ClearAllUsersList();
                 processing = true;
                 offset = 0;
                 client.Send(deepbot.WebsocketGetUsersCall(offset));
@@ -140,6 +161,26 @@ public class DeepbotWebsocketDataExtract
         return Task.CompletedTask;
     }
 
+    private static int SetupAPIOption()
+    {
+        bool valid = false;
+        int option = -1;
+
+        while (!valid)
+        {
+            Console.WriteLine("Please type the number of the operation you are trying to perform \n1: Retrieve all users and export to CSV\n2: Retrieve all users and export to XLSX (For Firebot)\n3: Attempt to update Firebot user.db with currency information\n0: Exit Program");
+
+            if (Int32.TryParse(Console.ReadLine(), out option))
+            {
+                if (option >= 0)
+                {
+                    valid = true;
+                }
+            }
+        }
+
+        return option;
+    }
 }
 
 public class DeepbotAPI
@@ -149,11 +190,7 @@ public class DeepbotAPI
     private int apiPort = 3337;
     private List<User> allUsers = new List<User>();
 
-    public DeepbotAPI() 
-    {
-        SetAPIKey();
-        SetAPIIP();
-    }
+    public DeepbotAPI() { }
 
     public string WebsocketURL()
     {
@@ -170,25 +207,39 @@ public class DeepbotAPI
         return $"api|get_users|{offset}|100";
     }
 
-    public async Task<Task> UpdateAllUsersList(List<User> users)
+    /// <summary>
+    /// Saves list of users to a variable for further use.
+    /// </summary>
+    /// <param name="users">List of users to process</param>
+    /// <returns>False if there are more users to process, True otherwise</returns>
+    public bool UpdateAllUsersList(List<User>? users)
     {
+        if (users == null || users.Count == 0)
+        {
+            Console.WriteLine("No users to process.");
+            return false;
+        }
+
         foreach (User person in users)
         {
+            if (string.IsNullOrEmpty(person.Username) || person.Username.Contains(" "))
+            {
+                Console.WriteLine($"User with potential invalid username skipped. Username: {person.Username}");
+                continue;
+            }
             allUsers.Add(person);
         }
 
         Console.WriteLine($"Retrieved {allUsers.Count} users");
-            
-        return Task.CompletedTask;
+        return true;
     }
 
-    public async Task<Task> ClearAllUsersList()
+    public void ClearAllUsersList()
     {
         allUsers = new List<User>();
-        return Task.CompletedTask;
     }
 
-    private void SetAPIKey()
+    public void SetAPIKey()
     {
         while (string.IsNullOrEmpty(apiKey))
         {
@@ -197,7 +248,7 @@ public class DeepbotAPI
         }
     }
 
-    private void SetAPIIP()
+    public void SetAPIIP()
     {
         Console.WriteLine("Please enter the IP address where Deepbot is hosted. If this is running locally, press enter: ");
         var input = Console.ReadLine() ?? "";
@@ -205,6 +256,7 @@ public class DeepbotAPI
         apiIP = string.IsNullOrEmpty(input) ? "localhost" : input;
     }
 
+    //TODO: Potentially make use of async for the file operations
     public void ProduceCSVFile()
     { 
         var filename = "deepbotUsers.csv";
@@ -277,11 +329,18 @@ public class DeepbotAPI
         {
             using (StreamReader sr = new StreamReader(filename))
             {
-                string line;
+                string? line;
 
                 while((line = sr.ReadLine()) != null)
                 {
-                    users.Add(JsonConvert.DeserializeObject<FirebotUserDB>(line));
+                    if (!string.IsNullOrEmpty(line))
+                    {
+                        var item = JsonConvert.DeserializeObject<FirebotUserDB>(line);
+                        if (item != null)
+                        {
+                            users.Add(item);
+                        }
+                    }
                 }
             }
 
@@ -298,13 +357,18 @@ public class DeepbotAPI
                 if(allUsers.Exists(a => a.Username == user.Username))
                 {
                     var userToUpdate = allUsers.FirstOrDefault(a => a.Username == user.Username);
+                    
+                    if (userToUpdate == default)
+                    {
+                        continue;
+                    }
+
                     user.LastSeen = ((DateTimeOffset)userToUpdate.LastSeen).ToUnixTimeMilliseconds();
                     user.JoinDate = ((DateTimeOffset)userToUpdate.JoinDate).ToUnixTimeMilliseconds();
-                    if (user.Currency.HasValues)
+                    if (user.Currency.HasValues && user.Currency.First != null)
                     {
                         JToken token = user.Currency.First;
                         user.Currency[token.Path] = userToUpdate.Points;
-                        //user.Currency[token.] = userToUpdate.Points;
                     }
                     usersUpdated++;
                 }
@@ -331,44 +395,23 @@ public class DeepbotAPI
                 Console.WriteLine($"{usernamesNotImported.Count} user(s) didn't exist in Firebot database. This could be because they no longer exist on Twitch. See {errorFilename} for further details of usernames not imported");
             }
         }
-        catch (FileNotFoundException e)
+        catch (FileNotFoundException)
         {
             Console.WriteLine("User.db was not found");
         }    
-    }
-
-    public int SetupAPIOption()
-    {
-        bool valid = false;
-        int option = -1;
-
-        while (!valid)
-        {
-            Console.WriteLine("Please type the number of the operation you are trying to perform \n1: Retrieve all users and export to CSV\n2: Retrieve all users and export to XLSX (For Firebot)\n3: Attempt to update Firebot user.db with currency information\n0: Exit Program");
-            
-            if(Int32.TryParse(Console.ReadLine(),out option))
-            {
-                if (option >= 0)
-                {
-                    valid = true;
-                }
-            }
-        }
-
-        return option;
     }
 }
 
 public class GetUsers
 {
     [JsonProperty("msg")]
-    public List<User>? Users { get; set; }
+    public List<User> Users { get; set; } = new List<User>();
 }
 
 public class User
 {
     [JsonProperty("user")]
-    public string? Username { get; set; }
+    public string Username { get; set; } = String.Empty;
     [JsonProperty("points")]
     public decimal Points { get; set; }
     [JsonProperty("watch_time")]
@@ -382,17 +425,17 @@ public class User
 public class FirebotUserDB
 {
     [JsonProperty("username")]
-    public string Username { get; set; }
+    public string Username { get; set; } = String.Empty;
     [JsonProperty("_id")]
-    public string Id { get; set; }
+    public string Id { get; set; } = String.Empty;
     [JsonProperty("displayName")]
-    public string? DisplayName { get; set; }
+    public string DisplayName { get; set; } = String.Empty;
     [JsonProperty("profilePicUrl")]
-    public string ProfilePicUrl { get; set; }
+    public string ProfilePicUrl { get; set; } = String.Empty;
     [JsonProperty("twitch")]
     public bool Twitch { get; set; }
     [JsonProperty("twitchRoles")]
-    public JObject? TwitchRoles { get; set; }
+    public JObject TwitchRoles { get; set; } = new JObject();
     [JsonProperty("online")]
     public bool Online { get; set; }
     [JsonProperty("onlineAt")]
@@ -412,11 +455,11 @@ public class FirebotUserDB
     [JsonProperty("disableViewerList")]
     public bool DisableViewerList { get; set; }
     [JsonProperty("metadata")]
-    public JObject? Metadata { get; set; }
+    public JObject Metadata { get; set; } = new JObject();
     [JsonProperty("currency")]
-    public JObject? Currency { get; set; }
+    public JObject Currency { get; set; } = new JObject();
     [JsonProperty("ranks")]
-    public JObject? Ranks { get; set; }
+    public JObject Ranks { get; set; } = new JObject();
 }
 
 
