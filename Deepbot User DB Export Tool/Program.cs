@@ -80,6 +80,24 @@ public class DeepbotWebsocketDataExtract
                         }
                     }
                 }
+                else if (function == "get_commands" && processing)
+                {
+                    if (message == "list empty")
+                    {
+                        updated = false;
+                    }
+                    else
+                    {
+                        updated = deepbot.UpdateAllCommandsList(JsonConvert.DeserializeObject<List<Command>>(message));
+
+                        if (updated)
+                        {
+                            offset += 100;
+                            client.Send(deepbot.WebsocketGetCommandsCall(offset));
+                            return;
+                        }
+                    }
+                }
 
                 switch (option)
                 {
@@ -89,7 +107,7 @@ public class DeepbotWebsocketDataExtract
                             offset = 0;
                             option = -1;
                             processing = false;
-                            deepbot.ProduceCSVFile();
+                            deepbot.ProduceUsersCSVFile();
                             option = SetupAPIOption();
                             await SendWebsocketMessageOption(client);
                         }
@@ -110,6 +128,16 @@ public class DeepbotWebsocketDataExtract
                             option = -1;
                             processing = false;
                             deepbot.ReadFirebotUserDatabase();
+                            option = SetupAPIOption();
+                            await SendWebsocketMessageOption(client);
+                        }
+                        break;
+                    case 4: // Retrieve all commands, then save file
+                        if (!updated)
+                        {
+                            option = -1;
+                            processing = false;
+                            deepbot.ProduceCommandsCSVFile();
                             option = SetupAPIOption();
                             await SendWebsocketMessageOption(client);
                         }
@@ -152,6 +180,12 @@ public class DeepbotWebsocketDataExtract
                 offset = 0;
                 client.Send(deepbot.WebsocketGetUsersCall(offset));
                 break;
+            case 4:
+                deepbot.ClearAllCommandsList();
+                processing = true;
+                offset = 0;
+                client.Send(deepbot.WebsocketGetCommandsCall(offset));
+                break;
             default:
                 break;
         }
@@ -166,11 +200,16 @@ public class DeepbotWebsocketDataExtract
 
         while (!valid)
         {
-            Console.WriteLine("Please type the number of the operation you are trying to perform \n1: Retrieve all users and export to CSV\n2: Retrieve all users and export to XLSX (For Firebot)\n3: Attempt to update Firebot user.db with currency information\n0: Exit Program");
+            Console.WriteLine("Please type the number of the operation you are trying to perform \n" +
+                "1: Retrieve all users and export to CSV\n" +
+                "2: Retrieve all users and export to XLSX (For Firebot)\n" +
+                "3: Attempt to update Firebot user.db with currency information\n" +
+                "4: Retrieve all commands and export to CSV\n" +
+                "0: Exit Program");
 
             if (Int32.TryParse(Console.ReadLine(), out option))
             {
-                if (option >= 0)
+                if (option >= 0 && option < 5)
                 {
                     valid = true;
                 }
@@ -187,6 +226,7 @@ public class DeepbotAPI
     private string apiIP = "localhost";
     private int apiPort = 3337;
     private List<User> allUsers = new List<User>();
+    private List<Command> allCommands = new List<Command>();
 
     public DeepbotAPI() { }
 
@@ -203,6 +243,11 @@ public class DeepbotAPI
     public string WebsocketGetUsersCall(int offset)
     {
         return $"api|get_users|{offset}|100";
+    }
+
+    public string WebsocketGetCommandsCall(int offset)
+    {
+        return $"api|get_commands|{offset}|100";
     }
 
     /// <summary>
@@ -232,9 +277,36 @@ public class DeepbotAPI
         return true;
     }
 
+    public bool UpdateAllCommandsList(List<Command>? commands)
+    {
+        if (commands == null || commands.Count == 0)
+        {
+            Console.WriteLine("No commands to process.");
+            return false;
+        }
+
+        foreach (Command command in commands)
+        {
+            if (string.IsNullOrEmpty(command.CommandName))
+            {
+                Console.WriteLine($"Command with blank name skipped. Message this command produced: {command.Message}");
+                continue;
+            }
+            allCommands.Add(command);
+        }
+
+        Console.WriteLine($"Retrieved {allCommands.Count} commands");
+        return true;
+    }
+
     public void ClearAllUsersList()
     {
         allUsers = new List<User>();
+    }
+
+    public void ClearAllCommandsList()
+    {
+        allCommands = new List<Command>();
     }
 
     public void SetAPIKey()
@@ -255,7 +327,7 @@ public class DeepbotAPI
     }
 
     //TODO: Potentially make use of async for the file operations
-    public void ProduceCSVFile()
+    public void ProduceUsersCSVFile()
     { 
         var filename = "deepbotUsers.csv";
         var file = new FileInfo(filename);
@@ -274,6 +346,32 @@ public class DeepbotAPI
         {
             user.WatchTimeHours = user.WatchTimeMinutes / 60;
             sb.AppendLine($"{user.Username},{(int)user.Points},{(int)user.WatchTimeMinutes},{(int)user.WatchTimeHours},{user.JoinDate},{user.LastSeen}");
+        }
+
+        File.WriteAllText(filename, sb.ToString());
+        Console.WriteLine("File created!");
+    }
+
+    //TODO: Potentially make use of async for the file operations
+    public void ProduceCommandsCSVFile()
+    {
+        var filename = "deepbotCommands.csv";
+        var file = new FileInfo(filename);
+
+        if (file.Exists)
+        {
+            file.Delete();
+        }
+
+        Console.WriteLine("Producing CSV file with retrieved data. Please wait...");
+
+        var sb = new StringBuilder();
+        sb.AppendLine("CommandName, Message, Enabled, AccessLevel, ShowInList");
+
+        foreach (Command command in allCommands)
+        {
+            command.Message = command.Message.Replace("\"", "\"\"");
+            sb.AppendLine($"\"{command.CommandName}\",\"{command.Message}\",{command.Enabled},{command.Access},{command.ShowInList}");
         }
 
         File.WriteAllText(filename, sb.ToString());
@@ -420,6 +518,28 @@ public class User
     public DateTime JoinDate { get; set; }
     [JsonProperty("last_seen")]
     public DateTime LastSeen { get; set; }
+}
+
+public class GetCommands
+{
+    [JsonProperty("msg")]
+    public List<Command> Commands { get; set; } = new List<Command>();
+}
+
+public class Command
+{
+    [JsonProperty("command")]
+    public string CommandName { get; set; } = "";
+    [JsonProperty("status")]
+    public bool Enabled { get; set; }
+    [JsonProperty("message")]
+    public string Message { get; set; }
+    [JsonProperty("access")]
+    public string Access { get; set; } = "1";
+    [JsonProperty("channelUseAllowed")]
+    public bool ChannelUseAllowed { get; set; }
+    [JsonProperty("showInList")]
+    public bool ShowInList { get; set; }
 }
 
 public class FirebotUserDB
