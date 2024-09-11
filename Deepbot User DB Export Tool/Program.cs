@@ -268,11 +268,12 @@ public class DeepbotAPI
         Console.WriteLine("Producing CSV file with retrieved data. Please wait...");
 
         var sb = new StringBuilder();
-        sb.AppendLine("Username, Points, Watch Time, Join Date, Last Seen");
+        sb.AppendLine("Username, Points, Watch Time Minutes, Watch Time Hours, Join Date, Last Seen");
         
         foreach(User user in allUsers)
         {
-            sb.AppendLine($"{user.Username},{user.Points},{user.WatchTime},{user.JoinDate},{user.LastSeen}");
+            user.WatchTimeHours = user.WatchTimeMinutes / 60;
+            sb.AppendLine($"{user.Username},{(int)user.Points},{(int)user.WatchTimeMinutes},{(int)user.WatchTimeHours},{user.JoinDate},{user.LastSeen}");
         }
 
         File.WriteAllText(filename, sb.ToString());
@@ -302,7 +303,7 @@ public class DeepbotAPI
                 ws.Cells[$"A{i}"].Value = user.Username;
                 ws.Cells[$"B{i}"].Value = "";
                 ws.Cells[$"C{i}"].Value = user.Points;
-                ws.Cells[$"D{i}"].Value = user.WatchTime / 60;
+                ws.Cells[$"D{i}"].Value = user.WatchTimeMinutes / 60;
                 i++;
             }
 
@@ -413,7 +414,8 @@ public class User
     [JsonProperty("points")]
     public decimal Points { get; set; }
     [JsonProperty("watch_time")]
-    public decimal WatchTime { get; set; }
+    public decimal WatchTimeMinutes { get; set; }
+    public decimal WatchTimeHours { get; set; }
     [JsonProperty("join_date")]
     public DateTime JoinDate { get; set; }
     [JsonProperty("last_seen")]
